@@ -1,0 +1,179 @@
+@startuml
+class StudentDashboardUI <<boundary>> {
+  - selectedZone : String
+  + displayAvailableSpots(spots : List<ParkingSpot>) : void
+  + onReserveSpotClicked(spotId : String, licensePlate : String) : void
+  + onSubmitAppealClicked(violationId : int, reasonText : String) : void
+  + displayCountdown(minutes : int) : void
+  + showErrorAlert(message : String) : void
+}
+class GuardTerminalUI <<boundary>> {
+  + onLogViolationClicked(licensePlate : String, reason : String) : void
+  + onIssueGuestQrClicked(guestPlate : String) : void
+}
+class AdminAppealUI <<boundary>> {
+  + onReviewAppealClicked(appealId : int, approved : boolean) : void
+}
+class LprGateBoundary <<boundary>> {
+  + onPlateScanned(licensePlate : String) : void
+  + onGuestQrScanned(qrToken : String) : void
+  + openBarrierGate() : void
+  + denyEntry() : void
+}
+class PaymentGatewayBoundary <<boundary>> {
+  + authorizeCreditCard(cardToken : String, amount : double) : String
+}
+class SmsGatewayBoundary <<boundary>> {
+  + sendSmsAlert(phoneNumber : String, message : String) : void
+}
+
+class ReservationControl <<control>> {
+  - reservationWindowMin : int
+  + findAvailableSpots(userId : int, zoneId : int) : List<ParkingSpot>
+  + reserveSpot(userId : int, spotId : String, licensePlate : String) : Reservation
+  + processLprGateEntry(licensePlate : String, zoneName : String) : boolean
+  + validateGuestQrEntry(qrToken : String) : boolean
+  + revokeExpiredReservations() : void
+}
+class EvBillingControl <<control>> {
+  - idleGraceMin : int
+  - idleRateNisPerHour : double
+  + authorizeEvPayment(reservationId : int, cardToken : String) : PaymentAuthorization
+  + notifyChargeComplete(sessionId : int) : void
+  + applyIdlePenalties() : void
+}
+class EnforcementControl <<control>> {
+  + issueGuestPass(guardId : int, guestPlate : String) : GuestPass
+  + logSevereViolation(guardId : int, licensePlate : String, reason : String) : Violation
+  + submitDigitalAppeal(violationId : int, reasonText : String) : Appeal
+  + reviewDigitalAppeal(appealId : int, approved : boolean) : void
+}
+
+abstract class User <<entity>> {
+  - userId : int
+  - fullName : String
+  - email : String
+  - phoneNumber : String
+  - role : UserRole [STUDENT,FACULTY,SECURITY_GUARD,TRAFFIC_ADMIN]
+  - noShowWarnings : int
+  + incrementNoShowWarnings() : void
+}
+class Student <<entity>> {
+  - studentId : String
+  - activePermit : boolean
+  + hasActivePermit() : boolean
+}
+class Faculty <<entity>> {
+  - facultyId : String
+  - department : String
+  - activePermit : boolean
+  + hasActivePermit() : boolean
+}
+class SecurityGuard <<entity>> {
+  - badgeNumber : String
+}
+class TrafficAdministrator <<entity>> {
+  - adminOfficeId : String
+}
+class GuestPass <<entity>> {
+  - qrToken : String
+  - guestPlate : String
+  - expiresAt : LocalDateTime
+  - isUsed : boolean
+  + isValid() : boolean
+  + markUsed() : void
+}
+class Vehicle <<entity>> {
+  - licensePlate : String
+}
+class ParkingZone <<entity>> {
+  - zoneId : int
+  - zoneName : String
+  - totalCapacity : int
+}
+class ParkingSpot <<entity>> {
+  - spotId : String
+  - isEvCharger : boolean
+  - status : SpotStatus [AVAILABLE,RESERVED,OCCUPIED]
+  - version : int
+  + isAvailable() : boolean
+  + tryReserve(expectedVersion : int) : boolean
+  + setStatus(status : SpotStatus) : void
+}
+class Reservation <<entity>> {
+  - reservationId : int
+  - createdAt : LocalDateTime
+  - expiresAt : LocalDateTime
+  - status : ReservationStatus [ACTIVE,FULFILLED,NO_SHOW_REVOKED]
+  + isWithin15MinWindow() : boolean
+  + setStatus(status : ReservationStatus) : void
+}
+class PaymentAuthorization <<entity>> {
+  - authId : String
+  - gatewayToken : String
+  - authorizedAmount : double
+  - authorizedAt : LocalDateTime
+}
+class ChargingSession <<entity>> {
+  - sessionId : int
+  - completedAt : LocalDateTime
+  - isPluggedIn : boolean
+  - isPhysicallyOccupied : boolean
+  - idlePenaltyNis : double
+  + isIdleOver30Minutes() : boolean
+}
+class Violation <<entity>> {
+  - violationId : int
+  - reason : String
+  - fineAmount : double
+  - isPaid : boolean
+  + cancelFine() : void
+}
+class Appeal <<entity>> {
+  - appealId : int
+  - reasonText : String
+  - decision : AppealDecision [PENDING,APPROVED,REJECTED]
+  + setDecision(decision : AppealDecision) : void
+}
+
+
+User <|-- Student
+User <|-- Faculty
+User <|-- SecurityGuard
+User <|-- TrafficAdministrator
+
+ParkingZone "1" o-- "1..*" ParkingSpot : contains
+Reservation "1" *-- "0..1" PaymentAuthorization : requires for EV
+Reservation "1" *-- "0..1" ChargingSession : initiates
+Violation "1" *-- "0..1" Appeal : contested by
+
+User "1" -- "0..*" Vehicle : owns
+Vehicle "1" -- "0..*" Reservation : booked for
+ParkingSpot "1" -- "0..*" Reservation : assigned to
+Vehicle "1" -- "0..*" Violation : receives
+SecurityGuard "0..1" -- "0..*" Violation : logs
+SecurityGuard "1" -- "0..*" GuestPass : issues
+TrafficAdministrator "0..1" -- "0..*" Appeal : reviews
+
+StudentDashboardUI "1" -- "1" ReservationControl : uses
+StudentDashboardUI "1" -- "1" EnforcementControl : submits appeals
+GuardTerminalUI "1" -- "1" EnforcementControl : uses
+AdminAppealUI "1" -- "1" EnforcementControl : uses
+LprGateBoundary "1" -- "1" ReservationControl : notifies
+PaymentGatewayBoundary "1" -- "1" EvBillingControl : authorizes
+SmsGatewayBoundary "1" -- "1" EvBillingControl : alerts
+
+ReservationControl "1" -- "0..*" User : manages
+ReservationControl "1" -- "0..*" Vehicle : checks
+ReservationControl "1" -- "0..*" ParkingZone : filters
+ReservationControl "1" -- "0..*" ParkingSpot : reserves
+ReservationControl "1" -- "0..*" Reservation : manages
+ReservationControl "1" -- "0..*" GuestPass : validates
+EvBillingControl "1" -- "0..*" PaymentAuthorization : creates
+EvBillingControl "1" -- "0..*" ChargingSession : monitors
+EvBillingControl "1" -- "0..*" Violation : creates idle penalty
+EnforcementControl "1" -- "0..*" Vehicle : looks up
+EnforcementControl "1" -- "0..*" GuestPass : issues
+EnforcementControl "1" -- "0..*" Violation : logs
+EnforcementControl "1" -- "0..*" Appeal : handles
+@enduml
